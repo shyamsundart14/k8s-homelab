@@ -1,0 +1,73 @@
+# Kubernetes PKI roles
+vault write pki_kubernetes/roles/kube-apiserver \
+    allowed_domains="kube-apiserver,kubernetes,kubernetes.default,kubernetes.default.svc,kubernetes.default.svc.cluster.local" \
+    allow_localhost=true allow_ip_sans=true allow_bare_domains=true \
+    max_ttl="720h" ttl="720h" key_type="rsa" key_bits=4096 \
+    organization="homelab" ou="homelab" country="India" locality="BLR"
+
+vault write pki_kubernetes/roles/kube-apiserver-kubelet-client \
+    allowed_domains="kube-apiserver-kubelet-client" allow_bare_domains=true \
+    max_ttl="720h" key_type="rsa" key_bits=4096 \
+    organization="system:masters" ou="homelab" country="India" locality="BLR"
+
+vault write pki_kubernetes/roles/kube-controller-manager \
+    allowed_domains="system:kube-controller-manager" allow_bare_domains=true \
+    max_ttl="720h" key_type="rsa" key_bits=4096 \
+    organization="homelab" ou="homelab" country="India" locality="BLR"
+
+vault write pki_kubernetes/roles/kube-scheduler \
+    allowed_domains="system:kube-scheduler" allow_bare_domains=true \
+    max_ttl="720h" key_type="rsa" key_bits=4096 \
+    organization="homelab" ou="homelab" country="India" locality="BLR"
+
+vault write pki_kubernetes/roles/admin \
+    allowed_domains="kubernetes-admin" allow_bare_domains=true \
+    max_ttl="720h" key_type="rsa" key_bits=4096 \
+    organization="system:masters" ou="homelab" country="India" locality="BLR"
+
+vault write pki_kubernetes/roles/service-account \
+    allowed_domains="service-accounts" allow_bare_domains=true \
+    max_ttl="720h" key_type="rsa" key_bits=4096 \
+    organization="homelab" ou="homelab" country="India" locality="BLR"
+
+vault write pki_kubernetes/roles/kube-proxy \
+    allowed_domains="system:kube-proxy" allow_bare_domains=true \
+    max_ttl="720h" key_type="rsa" key_bits=4096 \
+    organization="system:node-proxier" ou="homelab" country="India" locality="BLR"
+
+vault write pki_kubernetes/roles/kubelet-server \
+    allowed_domains="system:node:*" allow_glob_domains=true allow_bare_domains=true \
+    allow_ip_sans=true max_ttl="720h" key_type="rsa" key_bits=4096 \
+    organization="system:nodes" ou="homelab" country="India" locality="BLR"
+
+vault write pki_kubernetes/roles/kubelet-client \
+    allowed_domains="system:node:*" allow_glob_domains=true allow_bare_domains=true \
+    max_ttl="720h" key_type="rsa" key_bits=4096 \
+    organization="system:nodes" ou="homelab" country="India" locality="BLR"
+
+# etcd PKI roles
+vault write pki_etcd/roles/etcd-server \
+    allowed_domains="etcd-1,etcd-2,etcd-3,localhost" allow_bare_domains=true \
+    allow_ip_sans=true max_ttl="720h" key_type="rsa" key_bits=4096 \
+    organization="homelab" ou="homelab" country="India" locality="BLR"
+
+vault write pki_etcd/roles/etcd-peer \
+    allowed_domains="etcd-1,etcd-2,etcd-3" allow_bare_domains=true \
+    allow_ip_sans=true max_ttl="720h" key_type="rsa" key_bits=4096 \
+    organization="homelab" ou="homelab" country="India" locality="BLR"
+
+vault write pki_etcd/roles/etcd-client \
+    allowed_domains="kube-apiserver-etcd-client,etcd-healthcheck-client" allow_bare_domains=true \
+    max_ttl="720h" key_type="rsa" key_bits=4096 \
+    organization="homelab" ou="homelab" country="India" locality="BLR"
+
+vault write pki_etcd/roles/etcd-healthcheck-client \
+    allowed_domains="etcd-healthcheck-client" allow_bare_domains=true \
+    max_ttl="720h" key_type="rsa" key_bits=4096 \
+    organization="homelab" ou="homelab" country="India" locality="BLR"
+
+# Front-proxy PKI role
+vault write pki_front_proxy/roles/front-proxy-client \
+    allowed_domains="front-proxy-client" allow_bare_domains=true \
+    max_ttl="720h" key_type="rsa" key_bits=4096 \
+    organization="homelab" ou="homelab" country="India" locality="BLR"

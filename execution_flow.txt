@@ -1,0 +1,47 @@
+┌─────────────────────────────────────────────────────────────────┐
+│                    Execution Flow                                │
+└─────────────────────────────────────────────────────────────────┘
+
+Step 1: Manual/Script - Create VMs
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   └─▶ UTM + cloud-init (shell script fully automated)
+       Output: VMs running with IPs
+
+Step 2: Ansible - Bootstrap Vault
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   └─▶ ansible-playbook playbooks/vault-bootstrap.yml
+       - Install Vault binary
+       - Initialize & unseal
+       - Create root token
+       Output: Vault running, root token stored
+
+Step 3: Terraform - Configure Vault
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   └─▶ cd terraform/vault && terraform apply
+       - Create PKI backends
+       - Create policies
+       - Create AppRole for Ansible
+       Output: Vault configured with PKI
+
+Step 4: Ansible - Configure K8s Cluster
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   └─▶ ansible-playbook playbooks/site.yml
+       - Request certs from Vault
+       - Install etcd, K8s components
+       - Join cluster
+       Output: K8s cluster running
+
+Step 5: Terraform - Bootstrap K8s Resources
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   └─▶ cd terraform/kubernetes && terraform apply
+       - Create namespaces
+       - RBAC policies
+       - Install ArgoCD
+       Output: K8s ready for GitOps
+
+Step 6: GitOps - Everything Else
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   └─▶ ArgoCD syncs from Git
+       - All applications
+       - Monitoring, logging
+       - Ingress, cert-manager
