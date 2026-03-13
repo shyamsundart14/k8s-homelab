@@ -61,12 +61,32 @@
   failed_when: false
   when: etcd_binary.stat.exists
 
+# Check if etcd tarball was pre-cached by create-all-vms.sh
+- name: Check for pre-cached etcd tarball on jump
+  ansible.builtin.stat:
+    path: /tmp/etcd-cache/.pre-cached
+  register: etcd_pre_cached
+  delegate_to: localhost
+  run_once: true
+
+- name: Copy pre-cached etcd tarball from jump
+  ansible.builtin.copy:
+    src: "/tmp/etcd-cache/etcd-v{{ etcd_version }}-linux-arm64.tar.gz"
+    dest: "/tmp/etcd-v{{ etcd_version }}-linux-arm64.tar.gz"
+    mode: '0644'
+  when:
+    - etcd_pre_cached.stat.exists
+    - not etcd_binary.stat.exists or (etcd_current_version.stdout is defined and etcd_version not in etcd_current_version.stdout)
+  become: true
+
 - name: Download etcd tarball
   ansible.builtin.get_url:
     url: "https://github.com/etcd-io/etcd/releases/download/v{{ etcd_version }}/etcd-v{{ etcd_version }}-linux-arm64.tar.gz"
     dest: "/tmp/etcd-v{{ etcd_version }}-linux-arm64.tar.gz"
     mode: '0644'
-  when: not etcd_binary.stat.exists or (etcd_current_version.stdout is defined and etcd_version not in etcd_current_version.stdout)
+  when:
+    - not etcd_pre_cached.stat.exists
+    - not etcd_binary.stat.exists or (etcd_current_version.stdout is defined and etcd_version not in etcd_current_version.stdout)
   become: true
 
 - name: Extract etcd tarball

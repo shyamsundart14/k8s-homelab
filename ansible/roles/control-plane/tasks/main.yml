@@ -23,7 +23,15 @@
     path: /usr/local/bin/kube-apiserver
   register: apiserver_binary
 
-# Download to jump server first (cached for all masters)
+# Check if binaries were pre-cached by create-all-vms.sh
+- name: Check for pre-cached binaries on jump
+  ansible.builtin.stat:
+    path: /tmp/k8s-binaries/.pre-cached
+  register: k8s_pre_cached
+  delegate_to: localhost
+  run_once: true
+
+# Download to jump server only if not pre-cached
 - name: Ensure binary cache directory exists on jump
   ansible.builtin.file:
     path: /tmp/k8s-binaries
@@ -31,7 +39,7 @@
     mode: '0755'
   delegate_to: localhost
   run_once: true
-  when: not apiserver_binary.stat.exists
+  when: not apiserver_binary.stat.exists and not k8s_pre_cached.stat.exists
 
 - name: Download binaries to jump server (cached)
   ansible.builtin.get_url:
@@ -46,7 +54,7 @@
     - kubectl
   delegate_to: localhost
   run_once: true
-  when: not apiserver_binary.stat.exists
+  when: not apiserver_binary.stat.exists and not k8s_pre_cached.stat.exists
 
 - name: Copy binaries to masters
   ansible.builtin.copy:

@@ -6,6 +6,7 @@
 # Large binary files
 images/*.img
 iso/*.iso
+k8s-binaries/
 
 # macOS
 .DS_Store

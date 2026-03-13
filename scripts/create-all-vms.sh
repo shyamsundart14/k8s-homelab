@@ -17,7 +17,14 @@ NC='\033[0m'
 PROJECT_DIR="$HOME/k8s-homelab"
 ISO_DIR="$PROJECT_DIR/iso"
 IMG_DIR="$PROJECT_DIR/images"
+BIN_DIR="$PROJECT_DIR/k8s-binaries"
 UTM_DIR="$HOME/Library/Containers/com.utmapp.UTM/Data/Documents"
+
+# Binary versions (must match ansible role vars)
+ETCD_VERSION="3.5.12"
+K8S_VERSION="1.32.0"
+K8S_DOWNLOAD_URL="https://dl.k8s.io/release/v${K8S_VERSION}/bin/linux/arm64"
+ETCD_DOWNLOAD_URL="https://github.com/etcd-io/etcd/releases/download/v${ETCD_VERSION}/etcd-v${ETCD_VERSION}-linux-arm64.tar.gz"
 
 # Ubuntu Cloud Image
 CLOUD_IMG_URL="https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img"
@@ -442,7 +449,7 @@ done
 echo ""
 
 # Create directories
-mkdir -p "$ISO_DIR" "$IMG_DIR"
+mkdir -p "$ISO_DIR" "$IMG_DIR" "$BIN_DIR"
 
 # Step 1: Download cloud image
 header "Step 1/15: Cloud Image"
@@ -477,6 +484,44 @@ if [[ ! -f "$SSH_KEY_PRIVATE" ]] || [[ ! -f "$SSH_KEY_FILE" ]]; then
 fi
 SSH_KEY=$(cat "$SSH_KEY_FILE")
 echo -e "${GREEN}✓${NC} SSH key: $SSH_KEY_FILE"
+
+# Step 2.5: Download K8s binaries in background
+header "Step 2.5: Download K8s Binaries (Background)"
+download_binaries() {
+    local log_file="$BIN_DIR/download.log"
+    echo "[$(date)] Starting binary downloads..." > "$log_file"
+
+    # Download etcd tarball (if not already cached)
+    if [[ ! -f "$BIN_DIR/etcd-v${ETCD_VERSION}-linux-arm64.tar.gz" ]]; then
+        echo "[$(date)] Downloading etcd v${ETCD_VERSION}..." >> "$log_file"
+        curl -sL -o "$BIN_DIR/etcd-v${ETCD_VERSION}-linux-arm64.tar.gz" "$ETCD_DOWNLOAD_URL" 2>>"$log_file"
+        echo "[$(date)] etcd download complete" >> "$log_file"
+    else
+        echo "[$(date)] etcd tarball already cached" >> "$log_file"
+    fi
+
+    # Download K8s binaries (if not already cached)
+    for bin in kube-apiserver kube-controller-manager kube-scheduler kubectl; do
+        if [[ ! -f "$BIN_DIR/$bin" ]]; then
+            echo "[$(date)] Downloading $bin v${K8S_VERSION}..." >> "$log_file"
+            curl -sL -o "$BIN_DIR/$bin" "${K8S_DOWNLOAD_URL}/$bin" 2>>"$log_file"
+            echo "[$(date)] $bin download complete" >> "$log_file"
+        else
+            echo "[$(date)] $bin already cached" >> "$log_file"
+        fi
+    done
+
+    echo "[$(date)] All downloads complete" >> "$log_file"
+    touch "$BIN_DIR/.download-complete"
+}
+
+# Remove stale completion marker and start download in background
+rm -f "$BIN_DIR/.download-complete"
+download_binaries &
+DOWNLOAD_PID=$!
+echo -e "  Download started in background (PID: $DOWNLOAD_PID)"
+echo -e "  Log: $BIN_DIR/download.log"
+echo -e "${GREEN}✓${NC} Binary download running in background"
 
 # Step 3: Create VMs
 header "Step 3/15: Creating VMs"
@@ -821,6 +866,50 @@ fi
 
 echo ""
 echo "Results: ${success_count}/${#VMS[@]} VMs reachable"
+
+# Step 10.5: Wait for background binary downloads to complete
+header "Step 10.5: Wait for Binary Downloads"
+if kill -0 $DOWNLOAD_PID 2>/dev/null; then
+    echo -n "  Waiting for binary downloads to finish..."
+    while kill -0 $DOWNLOAD_PID 2>/dev/null; do
+        echo -n "."
+        sleep 3
+    done
+    echo ""
+fi
+
+if [[ -f "$BIN_DIR/.download-complete" ]]; then
+    echo -e "${GREEN}✓${NC} All binaries downloaded:"
+    ls -lh "$BIN_DIR"/*.tar.gz "$BIN_DIR"/kube-* "$BIN_DIR"/kubectl 2>/dev/null | awk '{print "  " $5 "  " $NF}'
+else
+    echo -e "${RED}✗${NC} Binary download may have failed - check $BIN_DIR/download.log"
+fi
+
+# Copy binaries to jump server (for ansible to use)
+if [[ "$JUMP_OK" == "true" ]] && [[ -f "$BIN_DIR/.download-complete" ]]; then
+    echo ""
+    echo "Copying binaries to jump server..."
+
+    # Create cache directories on jump
+    echo -n "  Creating cache dirs on jump..."
+    ssh jump "mkdir -p /tmp/k8s-binaries /tmp/etcd-cache" 2>/dev/null && echo -e " ${GREEN}OK${NC}" || echo -e " ${RED}FAILED${NC}"
+
+    # Copy K8s binaries
+    echo -n "  Copying K8s binaries..."
+    scp "$BIN_DIR/kube-apiserver" "$BIN_DIR/kube-controller-manager" "$BIN_DIR/kube-scheduler" "$BIN_DIR/kubectl" \
+        jump:/tmp/k8s-binaries/ 2>/dev/null && echo -e " ${GREEN}OK${NC}" || echo -e " ${RED}FAILED${NC}"
+
+    # Copy etcd tarball
+    echo -n "  Copying etcd tarball..."
+    scp "$BIN_DIR/etcd-v${ETCD_VERSION}-linux-arm64.tar.gz" \
+        jump:/tmp/etcd-cache/ 2>/dev/null && echo -e " ${GREEN}OK${NC}" || echo -e " ${RED}FAILED${NC}"
+
+    # Mark binaries as pre-cached on jump
+    ssh jump "touch /tmp/k8s-binaries/.pre-cached /tmp/etcd-cache/.pre-cached" 2>/dev/null
+    echo -e "${GREEN}✓${NC} Binaries pre-cached on jump server"
+else
+    echo -e "${YELLOW}Skipping binary copy to jump - either jump unreachable or downloads incomplete${NC}"
+fi
 
 # Step 11: Copy ansible directory to jump server
 header "Step 11/15: Copy Project Files to Jump"
