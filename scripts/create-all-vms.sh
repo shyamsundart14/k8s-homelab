@@ -6,6 +6,9 @@
 
 set -e
 
+# Track total script time
+SCRIPT_START_TIME=$(date +%s)
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -107,18 +110,11 @@ users:
   - name: k8s
     sudo: ALL=(ALL) NOPASSWD:ALL
     shell: /bin/bash
-    lock_passwd: false
-    plain_text_passwd: k8s123
+    lock_passwd: true
     ssh_authorized_keys:
       - ${ssh_key}
 
-ssh_pwauth: true
-chpasswd:
-  expire: false
-  users:
-    - name: ubuntu
-      password: ubuntu
-      type: text
+ssh_pwauth: false
 EOF
 
     # Jump needs package_update for extra packages; others skip for fast boot
@@ -1085,9 +1081,7 @@ echo "  ssh master-1"
 echo "  ssh worker-1"
 echo "  etc."
 echo ""
-echo "Console login (any VM):"
-echo "  Username: k8s"
-echo "  Password: k8s123"
+echo "Console access: SSH key only (~/.ssh/k8slab.key)"
 echo ""
 echo "VM Status:"
 echo "  utmctl list"
@@ -1097,3 +1091,11 @@ for vm_def in "${VMS[@]}"; do
     IFS=':' read -r name ip_suffix ram_mb vcpu disk_gb <<< "$vm_def"
     printf "  %-12s 192.168.64.%s\n" "$name" "$ip_suffix"
 done
+
+# Print total elapsed time
+SCRIPT_END_TIME=$(date +%s)
+ELAPSED=$((SCRIPT_END_TIME - SCRIPT_START_TIME))
+MINUTES=$((ELAPSED / 60))
+SECONDS_REM=$((ELAPSED % 60))
+echo ""
+echo -e "${BLUE}Total time: ${MINUTES}m ${SECONDS_REM}s${NC}"
