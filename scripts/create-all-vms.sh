@@ -1028,7 +1028,7 @@ if [[ "$JUMP_OK" == "true" ]]; then
                 echo -e "${GREEN}✓${NC} Certificates deployed to all nodes!"
                 
                 # Step 15: Deploy etcd Cluster
-                header "Step 15/15: Deploy etcd Cluster"
+                header "Step 15/16: Deploy etcd Cluster"
                 echo "Running etcd-cluster.yml playbook..."
                 echo "This will install and configure etcd on etcd-1, etcd-2, etcd-3..."
                 echo ""
@@ -1036,6 +1036,23 @@ if [[ "$JUMP_OK" == "true" ]]; then
                 if ssh jump 'cd ~/k8s-homelab/ansible && ansible-playbook -i inventory/ playbooks/etcd-cluster.yml'; then
                     echo ""
                     echo -e "${GREEN}✓${NC} etcd cluster deployed and healthy!"
+
+                    # Step 16: Deploy Control Plane
+                    header "Step 16/16: Deploy Control Plane"
+                    echo "Running control-plane.yml playbook..."
+                    echo "This will deploy kube-apiserver, controller-manager, scheduler on master-1, master-2..."
+                    echo ""
+
+                    if ssh jump 'cd ~/k8s-homelab/ansible && ansible-playbook -i inventory/ playbooks/control-plane.yml'; then
+                        echo ""
+                        echo -e "${GREEN}✓${NC} Control plane deployed!"
+                    else
+                        echo ""
+                        echo -e "${RED}✗${NC} Control plane deployment failed - run manually:"
+                        echo "  ssh jump"
+                        echo "  cd ~/k8s-homelab/ansible"
+                        echo "  ansible-playbook -i inventory/ playbooks/control-plane.yml"
+                    fi
                 else
                     echo ""
                     echo -e "${RED}✗${NC} etcd cluster deployment failed - run manually:"
