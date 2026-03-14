@@ -68,3 +68,32 @@
     dest: "{{ k8s_cert_dir }}/kubelet-client.key"
     mode: '0600'
   become: true
+
+# -----------------------------------------------------------------------------
+# Kube-Proxy Certificate (shared across all nodes running kube-proxy)
+# -----------------------------------------------------------------------------
+- name: Issue kube-proxy certificate
+  community.hashi_vault.vault_write:
+    url: "{{ vault_addr }}"
+    token: "{{ vault_token }}"
+    path: "{{ pki_kubernetes_path }}/issue/kube-proxy"
+    data:
+      common_name: "system:kube-proxy"
+      ttl: "{{ cert_ttl }}"
+  register: kube_proxy_cert
+  delegate_to: localhost
+  run_once: true
+
+- name: Deploy kube-proxy certificate
+  ansible.builtin.copy:
+    content: "{{ kube_proxy_cert.data.data.certificate }}"
+    dest: "{{ k8s_cert_dir }}/kube-proxy.crt"
+    mode: '0644'
+  become: true
+
+- name: Deploy kube-proxy key
+  ansible.builtin.copy:
+    content: "{{ kube_proxy_cert.data.data.private_key }}"
+    dest: "{{ k8s_cert_dir }}/kube-proxy.key"
+    mode: '0600'
+  become: true

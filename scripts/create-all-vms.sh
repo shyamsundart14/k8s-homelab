@@ -26,8 +26,14 @@ UTM_DIR="$HOME/Library/Containers/com.utmapp.UTM/Data/Documents"
 # Binary versions (must match ansible role vars)
 ETCD_VERSION="3.5.12"
 K8S_VERSION="1.32.0"
+CONTAINERD_VERSION="1.7.24"
+RUNC_VERSION="1.2.4"
+CALICO_VERSION="3.28.0"
 K8S_DOWNLOAD_URL="https://dl.k8s.io/release/v${K8S_VERSION}/bin/linux/arm64"
 ETCD_DOWNLOAD_URL="https://github.com/etcd-io/etcd/releases/download/v${ETCD_VERSION}/etcd-v${ETCD_VERSION}-linux-arm64.tar.gz"
+CONTAINERD_DOWNLOAD_URL="https://github.com/containerd/containerd/releases/download/v${CONTAINERD_VERSION}/containerd-${CONTAINERD_VERSION}-linux-arm64.tar.gz"
+RUNC_DOWNLOAD_URL="https://github.com/opencontainers/runc/releases/download/v${RUNC_VERSION}/runc.arm64"
+CALICO_MANIFEST_URL="https://raw.githubusercontent.com/projectcalico/calico/v${CALICO_VERSION}/manifests/calico.yaml"
 
 # Ubuntu Cloud Image
 CLOUD_IMG_URL="https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img"
@@ -134,6 +140,14 @@ packages:
   - jq
   - sshpass
 JUMPEOF
+    elif [[ "$name" == "haproxy" ]]; then
+        cat >> "$temp_dir/user-data" << 'HAEOF'
+
+package_update: true
+package_upgrade: false
+packages:
+  - haproxy
+HAEOF
     else
         cat >> "$temp_dir/user-data" << 'EOF'
 
@@ -448,7 +462,7 @@ echo ""
 mkdir -p "$ISO_DIR" "$IMG_DIR" "$BIN_DIR"
 
 # Step 1: Download cloud image
-header "Step 1/15: Cloud Image"
+header "Step 1/17: Cloud Image"
 if [[ -f "$CLOUD_IMG_BASE" ]]; then
     SIZE=$(stat -f%z "$CLOUD_IMG_BASE" 2>/dev/null || echo 0)
     if [[ "$SIZE" -gt 500000000 ]]; then
@@ -467,7 +481,7 @@ echo -e "${GREEN}✓${NC} Cloud image ready"
 # Note: Direct kernel boot not supported by UTM - using UEFI boot instead
 
 # Step 2: SSH Key
-header "Step 2/15: SSH Key"
+header "Step 2/17: SSH Key"
 SSH_KEY_PRIVATE="$HOME/.ssh/k8slab.key"
 SSH_KEY_FILE="${SSH_KEY_PRIVATE}.pub"
 
@@ -497,7 +511,7 @@ download_binaries() {
     fi
 
     # Download K8s binaries (if not already cached)
-    for bin in kube-apiserver kube-controller-manager kube-scheduler kubectl; do
+    for bin in kube-apiserver kube-controller-manager kube-scheduler kubectl kubelet kube-proxy; do
         if [[ ! -f "$BIN_DIR/$bin" ]]; then
             echo "[$(date)] Downloading $bin v${K8S_VERSION}..." >> "$log_file"
             curl -sL -o "$BIN_DIR/$bin" "${K8S_DOWNLOAD_URL}/$bin" 2>>"$log_file"
@@ -506,6 +520,33 @@ download_binaries() {
             echo "[$(date)] $bin already cached" >> "$log_file"
         fi
     done
+
+    # Download containerd tarball (if not already cached)
+    if [[ ! -f "$BIN_DIR/containerd-${CONTAINERD_VERSION}-linux-arm64.tar.gz" ]]; then
+        echo "[$(date)] Downloading containerd v${CONTAINERD_VERSION}..." >> "$log_file"
+        curl -sL -o "$BIN_DIR/containerd-${CONTAINERD_VERSION}-linux-arm64.tar.gz" "$CONTAINERD_DOWNLOAD_URL" 2>>"$log_file"
+        echo "[$(date)] containerd download complete" >> "$log_file"
+    else
+        echo "[$(date)] containerd tarball already cached" >> "$log_file"
+    fi
+
+    # Download runc binary (if not already cached)
+    if [[ ! -f "$BIN_DIR/runc.arm64" ]]; then
+        echo "[$(date)] Downloading runc v${RUNC_VERSION}..." >> "$log_file"
+        curl -sL -o "$BIN_DIR/runc.arm64" "$RUNC_DOWNLOAD_URL" 2>>"$log_file"
+        echo "[$(date)] runc download complete" >> "$log_file"
+    else
+        echo "[$(date)] runc already cached" >> "$log_file"
+    fi
+
+    # Download Calico manifest (if not already cached)
+    if [[ ! -f "$BIN_DIR/calico.yaml" ]]; then
+        echo "[$(date)] Downloading Calico v${CALICO_VERSION} manifest..." >> "$log_file"
+        curl -sL -o "$BIN_DIR/calico.yaml" "$CALICO_MANIFEST_URL" 2>>"$log_file"
+        echo "[$(date)] Calico manifest download complete" >> "$log_file"
+    else
+        echo "[$(date)] Calico manifest already cached" >> "$log_file"
+    fi
 
     echo "[$(date)] All downloads complete" >> "$log_file"
     touch "$BIN_DIR/.download-complete"
@@ -520,7 +561,7 @@ echo -e "  Log: $BIN_DIR/download.log"
 echo -e "${GREEN}✓${NC} Binary download running in background"
 
 # Step 3: Create VMs
-header "Step 3/15: Creating VMs"
+header "Step 3/17: Creating VMs"
 for vm_def in "${VMS[@]}"; do
     IFS=':' read -r name ip_suffix ram_mb vcpu disk_gb <<< "$vm_def"
     create_vm "$name" "192.168.64.${ip_suffix}" "$ram_mb" "$vcpu" "$disk_gb" "$SSH_KEY"
@@ -528,7 +569,7 @@ done
 echo -e "${GREEN}✓${NC} All VMs created"
 
 # Step 4: Restart UTM
-header "Step 4/15: Restart UTM"
+header "Step 4/17: Restart UTM"
 echo "Restarting UTM to detect new VMs..."
 pkill -x UTM 2>/dev/null || true
 sleep 2
@@ -537,7 +578,7 @@ sleep 5
 echo -e "${GREEN}✓${NC} UTM restarted"
 
 # Step 5: Update Mac /etc/hosts (jump for SSH, vault for browser access)
-header "Step 5/15: Update Mac /etc/hosts"
+header "Step 5/17: Update Mac /etc/hosts"
 HOSTS_MARKER="# K8s Homelab VMs"
 if grep -q "$HOSTS_MARKER" /etc/hosts 2>/dev/null; then
     echo "Hosts entries already exist, skipping..."
@@ -554,7 +595,7 @@ fi
 echo -e "${GREEN}✓${NC} Mac /etc/hosts ready"
 
 # Step 6: Setup SSH config (Mac only needs jump server - it's the bastion)
-header "Step 6/15: Setup SSH Config"
+header "Step 6/17: Setup SSH Config"
 SSH_CONFIG="$HOME/.ssh/config"
 SSH_MARKER="# K8s Homelab"
 
@@ -584,7 +625,7 @@ echo "SSH to jump: ssh jump"
 echo "SSH to others: ssh jump, then ssh master-1"
 
 # Step 7: Start all VMs
-header "Step 7/15: Starting VMs"
+header "Step 7/17: Starting VMs"
 for vm_def in "${VMS[@]}"; do
     IFS=':' read -r name ip_suffix ram_mb vcpu disk_gb <<< "$vm_def"
     echo -n "  Starting $name... "
@@ -598,7 +639,7 @@ done
 echo -e "${GREEN}✓${NC} All VMs started"
 
 # Step 8: Wait for VMs to boot
-header "Step 8/15: Waiting for VMs to Boot"
+header "Step 8/17: Waiting for VMs to Boot"
 echo "Polling SSH until VMs are ready..."
 echo ""
 
@@ -655,7 +696,7 @@ while true; do
 done
 
 # Step 9: Configure jump server with SSH key and config
-header "Step 9/15: Configure Jump Server"
+header "Step 9/17: Configure Jump Server"
 echo "Copying SSH key and config to jump server..."
 
 # Use key-based auth (same as Step 10) - password auth is unreliable
@@ -814,8 +855,27 @@ echo ""
 echo "Verifying jump server tools..."
 ssh jump "which ansible vault terraform" &>/dev/null && echo -e "  ansible, vault, terraform: ${GREEN}installed${NC}" || echo -e "  ${YELLOW}Some tools not installed - check manually${NC}"
 
+# Copy project files to jump (early - before connectivity test)
+if [[ "$JUMP_READY" == "true" ]]; then
+    echo ""
+    echo "Copying project files to jump server..."
+
+    echo -n "  Creating ~/k8s-homelab on jump..."
+    ssh jump "mkdir -p ~/k8s-homelab" 2>/dev/null && echo -e " ${GREEN}OK${NC}" || echo -e " ${RED}FAILED${NC}"
+
+    echo -n "  Copying ansible/..."
+    scp -r "$PROJECT_DIR/ansible" jump:~/k8s-homelab/ 2>/dev/null && echo -e " ${GREEN}OK${NC}" || echo -e " ${RED}FAILED${NC}"
+
+    echo -n "  Copying execution_flow.txt..."
+    scp "$PROJECT_DIR/execution_flow.txt" jump:~/k8s-homelab/ 2>/dev/null && echo -e " ${GREEN}OK${NC}" || echo -e " ${YELLOW}SKIP${NC}"
+
+    echo -e "${GREEN}✓${NC} Project files copied to jump:~/k8s-homelab/"
+else
+    echo -e "${YELLOW}Skipping project copy - jump server not reachable${NC}"
+fi
+
 # Step 10: Connectivity Test (via jump server)
-header "Step 10/15: Connectivity Test"
+header "Step 10/17: Connectivity Test"
 echo ""
 echo "Testing jump server from Mac, then other VMs via jump..."
 echo ""
@@ -888,11 +948,12 @@ if [[ "$JUMP_OK" == "true" ]] && [[ -f "$BIN_DIR/.download-complete" ]]; then
 
     # Create cache directories on jump
     echo -n "  Creating cache dirs on jump..."
-    ssh jump "mkdir -p /tmp/k8s-binaries /tmp/etcd-cache" 2>/dev/null && echo -e " ${GREEN}OK${NC}" || echo -e " ${RED}FAILED${NC}"
+    ssh jump "mkdir -p /tmp/k8s-binaries /tmp/etcd-cache /tmp/containerd-cache" 2>/dev/null && echo -e " ${GREEN}OK${NC}" || echo -e " ${RED}FAILED${NC}"
 
     # Copy K8s binaries
     echo -n "  Copying K8s binaries..."
     scp "$BIN_DIR/kube-apiserver" "$BIN_DIR/kube-controller-manager" "$BIN_DIR/kube-scheduler" "$BIN_DIR/kubectl" \
+        "$BIN_DIR/kubelet" "$BIN_DIR/kube-proxy" \
         jump:/tmp/k8s-binaries/ 2>/dev/null && echo -e " ${GREEN}OK${NC}" || echo -e " ${RED}FAILED${NC}"
 
     # Copy etcd tarball
@@ -900,37 +961,25 @@ if [[ "$JUMP_OK" == "true" ]] && [[ -f "$BIN_DIR/.download-complete" ]]; then
     scp "$BIN_DIR/etcd-v${ETCD_VERSION}-linux-arm64.tar.gz" \
         jump:/tmp/etcd-cache/ 2>/dev/null && echo -e " ${GREEN}OK${NC}" || echo -e " ${RED}FAILED${NC}"
 
+    # Copy containerd + runc
+    echo -n "  Copying containerd + runc..."
+    scp "$BIN_DIR/containerd-${CONTAINERD_VERSION}-linux-arm64.tar.gz" "$BIN_DIR/runc.arm64" \
+        jump:/tmp/containerd-cache/ 2>/dev/null && echo -e " ${GREEN}OK${NC}" || echo -e " ${RED}FAILED${NC}"
+
+    # Copy Calico manifest
+    echo -n "  Copying Calico manifest..."
+    scp "$BIN_DIR/calico.yaml" \
+        jump:/tmp/ 2>/dev/null && echo -e " ${GREEN}OK${NC}" || echo -e " ${RED}FAILED${NC}"
+
     # Mark binaries as pre-cached on jump
-    ssh jump "touch /tmp/k8s-binaries/.pre-cached /tmp/etcd-cache/.pre-cached" 2>/dev/null
+    ssh jump "touch /tmp/k8s-binaries/.pre-cached /tmp/etcd-cache/.pre-cached /tmp/containerd-cache/.pre-cached" 2>/dev/null
     echo -e "${GREEN}✓${NC} Binaries pre-cached on jump server"
 else
     echo -e "${YELLOW}Skipping binary copy to jump - either jump unreachable or downloads incomplete${NC}"
 fi
 
-# Step 11: Copy ansible directory to jump server
-header "Step 11/15: Copy Project Files to Jump"
-echo "Copying ansible directory to jump server..."
-
-if [[ "$JUMP_OK" == "true" ]]; then
-    # Create k8s-homelab directory on jump
-    echo -n "  Creating ~/k8s-homelab on jump..."
-    ssh jump "mkdir -p ~/k8s-homelab" 2>/dev/null && echo -e " ${GREEN}OK${NC}" || echo -e " ${RED}FAILED${NC}"
-
-    # Copy ansible directory
-    echo -n "  Copying ansible/..."
-    scp -r "$PROJECT_DIR/ansible" jump:~/k8s-homelab/ 2>/dev/null && echo -e " ${GREEN}OK${NC}" || echo -e " ${RED}FAILED${NC}"
-
-    # Copy execution_flow.txt for reference
-    echo -n "  Copying execution_flow.txt..."
-    scp "$PROJECT_DIR/execution_flow.txt" jump:~/k8s-homelab/ 2>/dev/null && echo -e " ${GREEN}OK${NC}" || echo -e " ${YELLOW}SKIP${NC}"
-
-    echo -e "${GREEN}✓${NC} Project files copied to jump:~/k8s-homelab/"
-else
-    echo -e "${YELLOW}Skipping - jump server not reachable${NC}"
-fi
-
-# Step 12: Setup Vault environment on jump
-header "Step 12/15: Setup Vault Environment"
+# Step 11: Setup Vault environment on jump
+header "Step 11/17: Setup Vault Environment"
 echo "Adding Vault environment to .bashrc..."
 
 if [[ "$JUMP_OK" == "true" ]]; then
@@ -986,7 +1035,7 @@ else
 fi
 
 # Step 13: Run Vault Full Setup
-header "Step 13/15: Run Vault Full Setup"
+header "Step 12/17: Run Vault Full Setup"
 echo "Running vault-full-setup.yml playbook..."
 
 if [[ "$JUMP_OK" == "true" ]]; then
@@ -1018,7 +1067,7 @@ if [[ "$JUMP_OK" == "true" ]]; then
             echo -e "${GREEN}✓${NC} Vault setup complete!"
             
             # Step 14: Deploy K8s Certificates
-            header "Step 14/15: Deploy K8s Certificates"
+            header "Step 13/17: Deploy K8s Certificates"
             echo "Running k8s-certs.yml playbook..."
             echo "This will issue and deploy certificates to all nodes..."
             echo ""
@@ -1027,18 +1076,45 @@ if [[ "$JUMP_OK" == "true" ]]; then
                 echo ""
                 echo -e "${GREEN}✓${NC} Certificates deployed to all nodes!"
                 
-                # Step 15: Deploy etcd Cluster
-                header "Step 15/16: Deploy etcd Cluster"
-                echo "Running etcd-cluster.yml playbook..."
-                echo "This will install and configure etcd on etcd-1, etcd-2, etcd-3..."
+                # Step 15: Deploy etcd + HAProxy in parallel
+                header "Step 14/17: Deploy etcd Cluster + HAProxy (Parallel)"
+                echo "Running etcd-cluster.yml and haproxy.yml in parallel..."
+                echo "  etcd: install and configure etcd on etcd-1, etcd-2, etcd-3"
+                echo "  HAProxy: configure load balancer (will wait for backends)"
                 echo ""
                 
-                if ssh jump 'cd ~/k8s-homelab/ansible && ansible-playbook -i inventory/ playbooks/etcd-cluster.yml'; then
-                    echo ""
+                # Run etcd in background
+                ssh jump 'cd ~/k8s-homelab/ansible && ansible-playbook -i inventory/ playbooks/etcd-cluster.yml' &
+                ETCD_PID=$!
+                
+                # Run HAProxy in background
+                ssh jump 'cd ~/k8s-homelab/ansible && ansible-playbook -i inventory/ playbooks/haproxy.yml' &
+                HAPROXY_PID=$!
+                
+                # Wait for both
+                ETCD_OK=false
+                HAPROXY_OK=false
+                
+                wait $ETCD_PID && ETCD_OK=true || true
+                if [[ "$ETCD_OK" == "true" ]]; then
                     echo -e "${GREEN}✓${NC} etcd cluster deployed and healthy!"
+                else
+                    echo -e "${RED}✗${NC} etcd cluster deployment failed - run manually:"
+                    echo "  ssh jump 'cd ~/k8s-homelab/ansible && ansible-playbook -i inventory/ playbooks/etcd-cluster.yml'"
+                fi
+                
+                wait $HAPROXY_PID && HAPROXY_OK=true || true
+                if [[ "$HAPROXY_OK" == "true" ]]; then
+                    echo -e "${GREEN}✓${NC} HAProxy configured!"
+                else
+                    echo -e "${RED}✗${NC} HAProxy configuration failed - run manually:"
+                    echo "  ssh jump 'cd ~/k8s-homelab/ansible && ansible-playbook -i inventory/ playbooks/haproxy.yml'"
+                fi
+                
+                if [[ "$ETCD_OK" == "true" ]]; then
 
                     # Step 16: Deploy Control Plane
-                    header "Step 16/16: Deploy Control Plane"
+                    header "Step 15/17: Deploy Control Plane"
                     echo "Running control-plane.yml playbook..."
                     echo "This will deploy kube-apiserver, controller-manager, scheduler on master-1, master-2..."
                     echo ""
@@ -1046,6 +1122,47 @@ if [[ "$JUMP_OK" == "true" ]]; then
                     if ssh jump 'cd ~/k8s-homelab/ansible && ansible-playbook -i inventory/ playbooks/control-plane.yml'; then
                         echo ""
                         echo -e "${GREEN}✓${NC} Control plane deployed!"
+
+                        # Step 17: Deploy Worker Nodes
+                        header "Step 16/17: Deploy Worker Nodes"
+                        echo "Running worker.yml playbook..."
+                        echo "This will deploy kubelet, kube-proxy on worker-1, worker-2, worker-3..."
+                        echo "Also copies admin kubeconfig to jump server and validates the cluster."
+                        echo ""
+
+                        if ssh jump 'cd ~/k8s-homelab/ansible && ansible-playbook -i inventory/ playbooks/worker.yml'; then
+                            echo ""
+                            echo -e "${GREEN}✓${NC} Worker nodes deployed and cluster validated!"
+
+                            # Step 18: Install Calico CNI
+                            header "Step 17/17: Install Calico CNI"
+                            echo "Installing Calico for pod networking and NetworkPolicy support..."
+                            echo ""
+
+                            if ssh jump 'if [[ -f /tmp/calico.yaml ]]; then echo "Using pre-cached calico.yaml"; else curl -sL https://raw.githubusercontent.com/projectcalico/calico/v3.28.0/manifests/calico.yaml -o /tmp/calico.yaml; fi && \
+                                sed -i "s|# - name: CALICO_IPV4POOL_CIDR|- name: CALICO_IPV4POOL_CIDR|; s|#   value: \"192.168.0.0/16\"|  value: \"10.244.0.0/16\"|" /tmp/calico.yaml && \
+                                kubectl apply -f /tmp/calico.yaml'; then
+                                echo ""
+                                echo "Waiting for nodes to become Ready..."
+                                sleep 30
+                                ssh jump 'kubectl get nodes -o wide'
+                                echo ""
+                                echo -e "${GREEN}✓${NC} Calico CNI installed!"
+                            else
+                                echo ""
+                                echo -e "${RED}✗${NC} Calico installation failed - run manually:"
+                                echo "  ssh jump"
+                                echo "  curl -sL https://raw.githubusercontent.com/projectcalico/calico/v3.28.0/manifests/calico.yaml -o /tmp/calico.yaml"
+                                echo "  sed -i 's|# - name: CALICO_IPV4POOL_CIDR|- name: CALICO_IPV4POOL_CIDR|; s|#   value: \"192.168.0.0/16\"|  value: \"10.244.0.0/16\"|' /tmp/calico.yaml"
+                                echo "  kubectl apply -f /tmp/calico.yaml"
+                            fi
+                        else
+                            echo ""
+                            echo -e "${RED}✗${NC} Worker deployment failed - run manually:"
+                            echo "  ssh jump"
+                            echo "  cd ~/k8s-homelab/ansible"
+                            echo "  ansible-playbook -i inventory/ playbooks/worker.yml"
+                        fi
                     else
                         echo ""
                         echo -e "${RED}✗${NC} Control plane deployment failed - run manually:"
@@ -1055,7 +1172,7 @@ if [[ "$JUMP_OK" == "true" ]]; then
                     fi
                 else
                     echo ""
-                    echo -e "${RED}✗${NC} etcd cluster deployment failed - run manually:"
+                    echo -e "${RED}✗${NC} etcd cluster deployment failed - cannot proceed to control plane"
                     echo "  ssh jump"
                     echo "  cd ~/k8s-homelab/ansible"
                     echo "  ansible-playbook -i inventory/ playbooks/etcd-cluster.yml"
